@@ -156,13 +156,19 @@ class API:
                 ]
 
                 newCursors = self._get_cursors(obj, cursor_type)
-                if newCursors is not None and len(newCursors) > 0:
-                    cursors = [*cursors, *newCursors]
+                cursors = [*cursors, *newCursors]
 
                 if cursor_type != "Bottom" and queue == "TweetDetail":
                     newCursors = self._get_cursors(obj)
-                    if newCursors is not None and len(newCursors) > 0:
-                        cursors = [*cursors, *newCursors]
+                    cursors = [*cursors, *newCursors]
+
+                if queue == "TweetDetail":
+                    # show replies marked as offensive
+                    newCursors = self._get_cursors(obj, "ShowMoreThreadsPrompt")
+                    cursors = [*cursors, *newCursors]
+                    # show replies marked as probable spam
+                    newCursors = self._get_cursors(obj, "ShowMoreThreads")
+                    cursors = [*cursors, *newCursors]
 
                 rep, cnt, active = self._is_end(
                     rep, queue, els, cursors[0] if len(cursors) > 0 else None, cnt, limit

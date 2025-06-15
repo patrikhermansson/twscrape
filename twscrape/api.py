@@ -5,7 +5,8 @@ from httpx import Response
 
 from .accounts_pool import AccountsPool
 from .logger import set_log_level
-from .models import Tweet, User, parse_trends, parse_tweet, parse_tweets, parse_user, parse_users
+from .models import (Tweet, User, parse_trends, parse_tweet, parse_tweets,
+                     parse_user, parse_users)
 from .queue_client import QueueClient
 from .utils import encode_params, find_obj, get_by_path
 
@@ -104,25 +105,27 @@ class API:
         is_lim = lim > 0 and new_total >= lim
 
         return rep if is_res else None, new_total, is_cur and not is_lim
-
-    def _get_cursor(self, obj: dict, cursor_type="Bottom") -> str | None:
-        if cur := find_obj(obj, lambda x: x.get("cursorType") == cursor_type):
-            return cur.get("value")
-        return None
+    def _get_cursors(self, obj: dict, cursor_type="Bottom"):
+        return [
+            cur.get("value") for cur in find_obj(obj, lambda x: x.get("cursorType") == cursor_type)
+        ]
 
     # gql helpers
 
     async def _gql_items(
         self, op: str, kv: dict, ft: dict | None = None, limit=-1, cursor_type="Bottom"
     ):
-        queue, cur, cnt, active = op.split("/")[-1], None, 0, True
+        queue, cursors, cnt, active = op.split("/")[-1], [], 0, True
         kv, ft = {**kv}, {**GQL_FEATURES, **(ft or {})}
 
         async with QueueClient(self.pool, queue, self.debug, proxy=self.proxy) as client:
             while active:
                 params = {"variables": kv, "features": ft}
-                if cur is not None:
-                    params["variables"]["cursor"] = cur
+                
+                if len(cursors) > 0:
+                    cursor, cursors = cursors[0], cursors[1:]
+                    params["variables"]["cursor"] = cursor
+                
                 if queue in ("SearchTimeline", "ListLatestTweetsTimeline"):
                     params["fieldToggles"] = {"withArticleRichContentState": False}
                 if queue in ("UserMedia",):
@@ -134,6 +137,15 @@ class API:
 
                 obj = rep.json()
                 els = get_by_path(obj, "entries") or []
+                
+                if len(els) == 0:
+                    moduleItems = get_by_path(obj, "moduleItems")
+                    if moduleItems is not None:
+                        els = [
+                            {"entryId": moduleItem["entryId"], "content": {"items": [moduleItem]}}
+                            for moduleItem in moduleItems
+                        ]
+                        
                 els = [
                     x
                     for x in els
@@ -142,9 +154,20 @@ class API:
                         or x["entryId"].startswith("messageprompt-")
                     )
                 ]
-                cur = self._get_cursor(obj, cursor_type)
 
-                rep, cnt, active = self._is_end(rep, queue, els, cur, cnt, limit)
+                newCursors = self._get_cursors(obj, cursor_type)
+                if newCursors is not None and len(newCursors) > 0:
+                    cursors = [*cursors, *newCursors]
+
+                if cursor_type != "Bottom" and queue == "TweetDetail":
+                    newCursors = self._get_cursors(obj)
+                    if newCursors is not None and len(newCursors) > 0:
+                        cursors = [*cursors, *newCursors]
+
+                rep, cnt, active = self._is_end(
+                    rep, queue, els, cursors[0] if len(cursors) > 0 else None, cnt, limit
+                )
+
                 if rep is None:
                     return
 
@@ -251,7 +274,7 @@ class API:
     # tweet_replies
     # note: uses same op as tweet_details, see: https://github.com/vladkens/twscrape/issues/104
 
-    async def tweet_replies_raw(self, twid: int, limit=-1, kv: KV = None):
+    async def tweet_replies_raw(self, twid: int, limit=-1, kv: KV = None, recursive=False):
         op = OP_TweetDetail
         kv = {
             "focalTweetId": str(twid),
@@ -266,18 +289,21 @@ class API:
             **(kv or {}),
         }
         async with aclosing(
-            self._gql_items(op, kv, limit=limit, cursor_type="ShowMoreThreads")
+            self._gql_items(
+                op, kv, limit=limit, cursor_type="ShowMore" if recursive is True else "Bottom"
+            )
         ) as gen:
             async for x in gen:
                 yield x
 
-    async def tweet_replies(self, twid: int, limit=-1, kv: KV = None):
-        async with aclosing(self.tweet_replies_raw(twid, limit=limit, kv=kv)) as gen:
+    async def tweet_replies(self, twid: int, limit=-1, kv=None, recursive=False):
+        async with aclosing(
+            self.tweet_replies_raw(twid, limit=limit, kv=kv, recursive=recursive)
+        ) as gen:
             async for rep in gen:
                 for x in parse_tweets(rep.json(), limit):
-                    if x.inReplyToTweetId == twid:
+                    if x.inReplyToTweetId is not None:
                         yield x
-
     # followers
 
     async def followers_raw(self, uid: int, limit=-1, kv: KV = None):

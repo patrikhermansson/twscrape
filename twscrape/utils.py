@@ -89,23 +89,21 @@ def find_or_fail(lst: list[T], fn: Callable[[T], bool]) -> T:
     return item
 
 
-def find_obj(obj: dict, fn: Callable[[dict], bool]) -> Any | None:
+def find_obj(obj: dict, fn: Callable[[dict], bool]) -> list[Any]:
     if not isinstance(obj, dict):
-        return None
+        return []
 
     if fn(obj):
-        return obj
+        return [obj]
 
+    objs = []
     for _, v in obj.items():
-        if isinstance(v, dict):
-            if res := find_obj(v, fn):
-                return res
-        elif isinstance(v, list):
-            for x in v:
-                if res := find_obj(x, fn):
-                    return res
+        v = v if isinstance(v, list) else [v]
+        for x in v:
+            if res := find_obj(x, fn):
+                objs.extend(res)
 
-    return None
+    return objs
 
 
 def get_typed_object(obj: dict, res: defaultdict[str, list]):

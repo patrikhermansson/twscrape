@@ -26,14 +26,14 @@ class XClIdGenStore:
     items: dict[str, XClIdGen] = {}  # username -> XClIdGen
 
     @classmethod
-    async def get(cls, username: str, fresh=False) -> XClIdGen:
+    async def get(cls, username: str, fresh=False, proxy: str | None = None) -> XClIdGen:
         if username in cls.items and not fresh:
             return cls.items[username]
 
         tries = 0
         while tries < 3:
             try:
-                clid_gen = await XClIdGen.create()
+                clid_gen = await XClIdGen.create(proxy=proxy)
                 cls.items[username] = clid_gen
                 return clid_gen
             except httpx.HTTPStatusError:
@@ -54,14 +54,14 @@ class Ctx:
     async def aclose(self):
         await self.clt.aclose()
 
-    async def req(self, method: str, url: str, params: ReqParams = None) -> Response:
+    async def req(self, method: str, url: str, params: ReqParams = None, proxy: str | None = None) -> Response:
         # if code 404 on first try then generate new x-client-transaction-id and retry
         # https://github.com/vladkens/twscrape/issues/248
         path = urlparse(url).path or "/"
 
         tries = 0
         while tries < 3:
-            gen = await XClIdGenStore.get(self.acc.username, fresh=tries > 0)
+            gen = await XClIdGenStore.get(self.acc.username, fresh=tries > 0, proxy=proxy)
             hdr = {"x-client-transaction-id": gen.calc(method, path)}
             rep = await self.clt.request(method, url, params=params, headers=hdr)
             if rep.status_code != 404:
@@ -251,14 +251,13 @@ class QueueClient:
 
     async def req(self, method: str, url: str, params: ReqParams = None) -> Response | None:
         unknown_retry, connection_retry = 0, 0
-
         while True:
             ctx = await self._get_ctx()  # not need to close client, class implements __aexit__
             if ctx is None:
                 return None
 
             try:
-                rep = await ctx.req(method, url, params=params)
+                rep = await ctx.req(method, url, params=params, proxy=self.proxy)
                 setattr(rep, "__username", ctx.acc.username)
                 await self._check_rep(rep)
 

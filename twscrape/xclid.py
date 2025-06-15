@@ -11,13 +11,14 @@ import httpx
 from fake_useragent import UserAgent
 
 
-def _make_client() -> httpx.AsyncClient:
+def _make_client(proxy: str | None = None) -> httpx.AsyncClient:
     headers = {"user-agent": UserAgent().chrome}
-    return httpx.AsyncClient(headers=headers, follow_redirects=True)
+    return httpx.AsyncClient(headers=headers, follow_redirects=True, proxy=proxy)
 
 
-async def get_tw_page_text(url: str, clt: httpx.AsyncClient | None = None):
-    clt = clt or _make_client()
+async def get_tw_page_text(url: str, clt: httpx.AsyncClient | None = None, proxy: str | None = None):
+    clt = clt or _make_client(proxy=proxy)
+
     rep = await clt.get(url)
 
     rep.raise_for_status()
@@ -198,13 +199,13 @@ def parse_vk_bytes(soup: bs4.BeautifulSoup) -> list[int]:
     return list(base64.b64decode(bytes(el, "utf-8")))
 
 
-async def parse_anim_idx(text: str) -> list[int]:
+async def parse_anim_idx(text: str, proxy: str | None = None) -> list[int]:
     scripts = list(get_scripts_list(text))
     scripts = [x for x in scripts if "/ondemand.s." in x]
     if not scripts:
         raise Exception("Couldn't get XClientTxId scripts")
 
-    text = await get_tw_page_text(scripts[0])
+    text = await get_tw_page_text(scripts[0], proxy=proxy)
 
     items = [int(x.group(2)) for x in INDICES_REGEX.finditer(text)]
     if not items:
@@ -226,8 +227,8 @@ def parse_anim_arr(soup: bs4.BeautifulSoup, vk_bytes: list[int]) -> list[list[fl
     return arr
 
 
-async def load_keys(soup: bs4.BeautifulSoup) -> tuple[list[int], str]:
-    anim_idx = await parse_anim_idx(str(soup))
+async def load_keys(soup: bs4.BeautifulSoup, proxy: str | None = None) -> tuple[list[int], str]:
+    anim_idx = await parse_anim_idx(str(soup), proxy=proxy)
     vk_bytes = parse_vk_bytes(soup)
     anim_arr = parse_anim_arr(soup, vk_bytes)
 
@@ -245,11 +246,11 @@ async def load_keys(soup: bs4.BeautifulSoup) -> tuple[list[int], str]:
 
 class XClIdGen:
     @staticmethod
-    async def create(clt: httpx.AsyncClient | None = None) -> "XClIdGen":
-        text = await get_tw_page_text("https://x.com/tesla", clt=clt)
+    async def create(clt: httpx.AsyncClient | None = None, proxy: str | None = None) -> "XClIdGen":
+        text = await get_tw_page_text("https://x.com/tesla", clt=clt, proxy=proxy)
         soup = bs4.BeautifulSoup(text, "html.parser")
 
-        vk_bytes, anim_key = await load_keys(soup)
+        vk_bytes, anim_key = await load_keys(soup, proxy=proxy)
         clid_gen = XClIdGen(vk_bytes, anim_key)
         return clid_gen
 
@@ -276,10 +277,10 @@ class XClIdGen:
 
 
 async def main():
-    text = await get_tw_page_text("https://x.com/elonmusk")
+    text = await get_tw_page_text("https://x.com/elonmusk", proxy="http://Selserovpavel59:X3u7OzP@185.175.225.211:50100")
     soup = bs4.BeautifulSoup(text, "html.parser")
 
-    vk_bytes, anim_key = await load_keys(soup)
+    vk_bytes, anim_key = await load_keys(soup, proxy="http://Selserovpavel59:X3u7OzP@185.175.225.211:50100")
     clid_gen = XClIdGen(vk_bytes, anim_key)
 
     method = "GET"

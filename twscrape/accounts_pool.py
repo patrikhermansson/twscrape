@@ -288,17 +288,27 @@ class AccountsPool:
         while True:
             account = await self.get_for_queue(queue)
             if not account:
+                # Check if we have any active accounts at all
+                total_active = await self._get_active_count()
+                
                 if self._raise_when_no_account or get_env_bool("TWS_RAISE_WHEN_NO_ACCOUNT"):
-                    raise NoAccountError(f"No account available for queue {queue}")
-
+                    # Only raise if there are NO active accounts configured
+                    if total_active == 0:
+                        raise NoAccountError(f"No active accounts configured")
+                    # If there are active accounts but they're rate-limited, continue to wait
+                
                 if not msg_shown:
                     nat = await self.next_available_at(queue)
                     if not nat:
-                        logger.warning("No active accounts. Stopping...")
-                        return None
-
-                    msg = f'No account available for queue "{queue}". Next available at {nat}'
-                    logger.info(msg)
+                        if total_active == 0:
+                            logger.warning("No active accounts. Stopping...")
+                            return None
+                        else:
+                            # This shouldn't happen, but let's handle it gracefully
+                            logger.warning("All active accounts are locked but no next available time found. Retrying...")
+                    else:
+                        msg = f'No account available for queue "{queue}". Next available at {nat}'
+                        logger.info(msg)
                     msg_shown = True
 
                 await asyncio.sleep(5)
@@ -308,6 +318,12 @@ class AccountsPool:
                     logger.info(f"Continuing with account {account.username} on queue {queue}")
 
             return account
+
+    async def _get_active_count(self) -> int:
+        """Get count of active accounts"""
+        qs = "SELECT COUNT(*) FROM accounts WHERE active = true"
+        rs = await fetchone(self._db_file, qs)
+        return rs[0] if rs else 0
 
     async def next_available_at(self, queue: str):
         qs = f"""

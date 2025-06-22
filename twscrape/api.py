@@ -84,6 +84,9 @@ class API:
     ):
         if isinstance(pool, AccountsPool):
             self.pool = pool
+            # Allow overriding the raise_when_no_account setting on existing pool
+            if raise_when_no_account != pool._raise_when_no_account:
+                pool._raise_when_no_account = raise_when_no_account
         elif isinstance(pool, str):
             self.pool = AccountsPool(db_file=pool, raise_when_no_account=raise_when_no_account)
         else:
